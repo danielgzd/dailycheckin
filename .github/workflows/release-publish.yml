@@ -12,17 +12,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@master
+      - uses: actions/checkout@v4
       - name: Set up Python 3.9
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v5
         with:
           python-version: 3.9
-      - name: Install pypa/build
-        run: >-
-          python -m
-          pip install
-          build
-          --user
+      - name: Identify Python build runtime
+        id: python-runtime
+        run: |
+          python - <<'PYTHON'
+          import hashlib, os, sys
+          identity = sys.version + sys.executable + os.environ.get('ImageVersion', '')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              print('fingerprint=' + hashlib.sha256(identity.encode()).hexdigest(), file=stream)
+          PYTHON
+      - name: Restore Python build environment
+        id: build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/pypa-build-venv
+          key: pypa-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.python-runtime.outputs.fingerprint }}-${{ hashFiles('pyproject.toml', 'setup.py', 'setup.cfg') }}-end
+      - name: Install pypa/build on cache miss
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        run: |
+          python -m venv --clear "$RUNNER_TEMP/pypa-build-venv"
+          "$RUNNER_TEMP/pypa-build-venv/bin/python" -m pip install build
+      - name: Verify and activate build environment
+        run: |
+          "$RUNNER_TEMP/pypa-build-venv/bin/python" -m pip check
+          "$RUNNER_TEMP/pypa-build-venv/bin/python" -m build --version
+          echo "$RUNNER_TEMP/pypa-build-venv/bin" >> "$GITHUB_PATH"
+      - name: Save Python build environment
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/pypa-build-venv
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
       - name: Build a binary wheel and a source tarball
         run: >-
           python -m
